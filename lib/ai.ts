@@ -1,7 +1,6 @@
 export const AI_BASE_URL =
   process.env.AI_BASE_URL || "https://api.groq.com/openai/v1";
-export const AI_MODEL =
-  process.env.AI_MODEL || "llama-3.3-70b-versatile";
+export const AI_MODEL = process.env.AI_MODEL || "qwen/qwen3.8-27b";
 
 export function isAiConfigured(): boolean {
   return Boolean(process.env.AI_API_KEY);
