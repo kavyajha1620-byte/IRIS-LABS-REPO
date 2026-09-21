@@ -2,10 +2,19 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { searchBusinesses, mapIndustry, getPlacesKey } from "@/lib/places";
+import { searchBusinessesOsm, mapIndustry } from "@/lib/osm";
 import { chatCompletion, isAiConfigured } from "@/lib/ai";
 import { LEAD_STATUSES, LEAD_PRIORITIES, INDUSTRIES, LEAD_SOURCES } from "@/lib/constants";
 import type { ActionResult } from "@/lib/actions/leads";
+import { insertLeadsDedupe } from "@/lib/insert-leads";
+import {
+  fingerprint,
+  computeLeadScore,
+  parseTags,
+  mapToAllowedIndustry,
+  normalizePhone,
+  normalizeEmail,
+} from "@/lib/leads-utils";
 
 const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
@@ -18,7 +27,9 @@ export interface ResearchRow {
   email: string | null;
   website: string | null;
   country: string | null;
+  state: string | null;
   city: string | null;
+  address: string | null;
   industry: string;
   source: string;
   status: string;
@@ -29,7 +40,7 @@ export interface ResearchRow {
 
 export interface ResearchReport {
   query: string;
-  source: "google" | "ai";
+  source: "osm" | "ai";
   researched: number;
   inserted: number;
   skipped: number;
@@ -43,27 +54,23 @@ const ALLOWED_PRIORITIES = LEAD_PRIORITIES as readonly string[];
 const ALLOWED_INDUSTRIES = INDUSTRIES as readonly string[];
 const ALLOWED_SOURCES = LEAD_SOURCES as readonly string[];
 
-const normalizePhone = (v: string) => (v ?? "").replace(/[^\d]/g, "");
-const normalizeEmail = (v: string) => (v ?? "").trim().toLowerCase();
-
-function cleanRow(raw: Record<string, unknown>, source: "google" | "ai"): ResearchRow | null {
+function cleanRow(raw: Record<string, unknown>, source: "osm" | "ai"): ResearchRow | null {
   const full_name = String(raw.full_name ?? raw.name ?? "").trim();
   const email = normalizeEmail(String(raw.email ?? ""));
   const phone = normalizePhone(String(raw.phone ?? ""));
   const website = String(raw.website ?? "").trim();
   const city = String(raw.city ?? "").trim();
   const country = String(raw.country ?? "").trim();
-  const address = String(raw.address ?? "").trim();
 
   if (!full_name) return null;
   if (email && !EMAIL_RE.test(email)) return null;
   if (phone && phone.length < 7) return null;
 
-  let industry = String(raw.industry ?? "").trim();
-  if (!ALLOWED_INDUSTRIES.includes(industry)) {
-    const mapped = mapIndustry((raw.types as string[]) ?? []);
-    industry = ALLOWED_INDUSTRIES.includes(mapped) ? mapped : "Other";
-  }
+  let rawIndustry = String(raw.industry ?? "").trim();
+  const tags = (raw.osm_tags as Record<string, string> | undefined) ?? {};
+  const fromTags = Object.keys(tags).length ? mapIndustry(tags) : "";
+  const industry = mapToAllowedIndustry(rawIndustry, fromTags) ?? "Other";
+  rawIndustry = industry;
 
   let status = String(raw.status ?? "New").trim();
   if (!ALLOWED_STATUSES.includes(status)) status = "New";
@@ -72,12 +79,20 @@ function cleanRow(raw: Record<string, unknown>, source: "google" | "ai"): Resear
   if (!ALLOWED_PRIORITIES.includes(priority)) priority = "Medium";
 
   let sourceName = String(raw.source ?? "").trim();
-  if (!ALLOWED_SOURCES.includes(sourceName)) sourceName = source === "google" ? "Google Maps" : "AI Research";
+  if (!ALLOWED_SOURCES.includes(sourceName)) {
+    sourceName = source === "osm" ? "OpenStreetMap" : "AI Research";
+  }
 
-  const rating = raw.rating !== null && raw.rating !== undefined ? Number(raw.rating) : null;
+  const state = String(raw.state ?? "").trim();
+  const address = String(raw.address ?? "").trim();
+
+  const noContact =
+    source === "osm" && !phone && !website && !email
+      ? "No phone/website listed on OpenStreetMap — verify before calling."
+      : "";
   const notes = [
     address ? `Address: ${address}` : "",
-    rating ? `Google rating: ${rating}/5` : "",
+    noContact,
     source === "ai" ? "AI-generated — verify phone/website before calling." : "",
   ]
     .filter(Boolean)
@@ -93,8 +108,10 @@ function cleanRow(raw: Record<string, unknown>, source: "google" | "ai"): Resear
     whatsapp: normalizePhone(String(raw.whatsapp ?? "")) || phone || null,
     email: email || null,
     website: website || null,
-    country: country || (raw.country ? String(raw.country) : null),
+    country: country || null,
+    state: state || null,
     city: city || null,
+    address: address || null,
     industry,
     source: sourceName,
     status,
@@ -128,7 +145,7 @@ Rules:
 - NEVER invent, guess, or alter phone numbers, websites, emails, names or addresses. Only use data present in the input.
 - Full name must be present for every row.
 - status must be "New" for every row.
-- Industry must be one of the allowed values above (map Google 'types' if needed).
+- Industry must be one of the allowed values above (map OSM tags/Google types if needed).
 - Return ONLY the JSON object; no prose, no markdown.`;
 
 export async function runLeadResearch(
@@ -158,56 +175,39 @@ export async function runLeadResearch(
 
   let raw: Array<Record<string, unknown>> = [];
 
-  if (getPlacesKey()) {
-    try {
-      const businesses = await searchBusinesses(q, { limit: count });
-      report.source = "google";
-      raw = businesses.map((b) => ({ ...b, full_name: b.name, company: b.name }));
-    } catch (e) {
-      report.errors.push(e instanceof Error ? e.message : "Google Places search failed.");
-      // Fall back to AI knowledge if Places failed but AI is available.
-      if (!isAiConfigured()) return { ok: false, error: report.errors[0], report };
+  // OpenStreetMap is free and needs no API key — always try it first for real data.
+  try {
+    const businesses = await searchBusinessesOsm(q, { limit: count });
+    if (businesses.length) {
+      report.source = "osm";
+      raw = businesses.map((b) => ({
+        full_name: b.name,
+        company: b.name,
+        phone: b.phone,
+        whatsapp: b.phone,
+        website: b.website,
+        email: b.email,
+        address: b.address,
+        city: b.city,
+        country: b.country,
+        osm_tags: b.tags,
+      }));
     }
-  } else if (!isAiConfigured()) {
-    return {
-      ok: false,
-      error: "Research needs a GOOGLE_PLACES_API_KEY or an AI_API_KEY in your environment.",
-      report,
-    };
+  } catch (e) {
+    report.errors.push(e instanceof Error ? e.message : "OpenStreetMap search failed.");
   }
 
-  if (raw.length && raw.length < count) {
-    // AI-assist: fill the remaining slots from knowledge if AI is available.
-    if (isAiConfigured()) {
-      try {
-        const gen = await chatCompletion(
-          [
-            { role: "system", content: AI_SYSTEM },
-            {
-              role: "user",
-              content: `Research "${q}". Produce a JSON object {"leads": []} with up to ${
-                count - raw.length
-              } real, well-known businesses. Every phone, website and email you include must be real public information; leave fields empty when unsure.`,
-            },
-          ],
-          { json: true, temperature: 0.3 }
-        );
-        const list = ((gen.json as { leads?: unknown[] } | undefined)?.leads ?? []) as Array<
-          Record<string, unknown>
-        >;
-        raw = [...raw, ...list];
-      } catch (e) {
-        report.errors.push(e instanceof Error ? e.message : "AI fallback failed.");
-      }
-    }
-  } else if (!raw.length && isAiConfigured()) {
+  if (raw.length && raw.length < count && isAiConfigured()) {
+    // AI-assist: fill the remaining slots from well-known public info if available.
     try {
       const gen = await chatCompletion(
         [
           { role: "system", content: AI_SYSTEM },
           {
             role: "user",
-            content: `Research "${q}". Produce a JSON object {"leads": []} with up to ${count} real, well-known businesses. Every phone, website and email you include must be real public information; leave fields empty when unsure.`,
+            content: `Research "${q}". Produce a JSON object {"leads": []} with up to ${
+              count - raw.length
+            } real, well-known businesses. Every phone, website and email you include must be real public information; leave fields empty when unsure.`,
           },
         ],
         { json: true, temperature: 0.3 }
@@ -215,24 +215,53 @@ export async function runLeadResearch(
       const list = ((gen.json as { leads?: unknown[] } | undefined)?.leads ?? []) as Array<
         Record<string, unknown>
       >;
-      raw = list;
+      raw = [...raw, ...list];
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : "Research failed.", report };
+      report.errors.push(e instanceof Error ? e.message : "AI fallback failed.");
+    }
+  } else if (!raw.length) {
+    if (isAiConfigured()) {
+      try {
+        const gen = await chatCompletion(
+          [
+            { role: "system", content: AI_SYSTEM },
+            {
+              role: "user",
+              content: `Research "${q}". Produce a JSON object {"leads": []} with up to ${count} real, well-known businesses. Every phone, website and email you include must be real public information; leave fields empty when unsure.`,
+            },
+          ],
+          { json: true, temperature: 0.3 }
+        );
+        const list = ((gen.json as { leads?: unknown[] } | undefined)?.leads ?? []) as Array<
+          Record<string, unknown>
+        >;
+        raw = list;
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "Research failed.", report };
+      }
+    } else if (report.errors.length) {
+      return { ok: false, error: report.errors[0], report };
+    } else {
+      return {
+        ok: false,
+        error: "No businesses found on OpenStreetMap for that query. Try a different city or a common business type (e.g. “plumbers in Miami”).",
+        report,
+      };
     }
   }
 
   report.researched = raw.length;
 
-  // AI normalization pass over the raw rows to guarantee clean, valid data.
+  // AI normalization pass over OSM rows to guarantee clean, valid data.
   let rows: ResearchRow[] = [];
-  if (report.source === "google" && isAiConfigured() && raw.length) {
+  if (report.source === "osm" && isAiConfigured() && raw.length) {
     try {
       const norm = await chatCompletion(
         [
           { role: "system", content: AI_SYSTEM },
           {
             role: "user",
-            content: `Clean these Google Places results and return JSON {"leads":[...]}. Do not invent anything.\n${JSON.stringify(
+            content: `Clean these OpenStreetMap results and return JSON {"leads":[...]}. Do not invent anything.\n${JSON.stringify(
               raw.slice(0, count)
             )}`,
           },
@@ -242,12 +271,12 @@ export async function runLeadResearch(
       const leads = ((norm.json as { leads?: unknown[] } | undefined)?.leads ?? []) as Array<
         Record<string, unknown>
       >;
-      rows = leads.map((r) => cleanRow(r, "google")).filter((x): x is ResearchRow => x !== null);
+      rows = leads.map((r) => cleanRow(r, "osm")).filter((x): x is ResearchRow => x !== null);
       if (!rows.length) {
-        rows = raw.map((r) => cleanRow(r, "google")).filter((x): x is ResearchRow => x !== null);
+        rows = raw.map((r) => cleanRow(r, "osm")).filter((x): x is ResearchRow => x !== null);
       }
     } catch {
-      rows = raw.map((r) => cleanRow(r, "google")).filter((x): x is ResearchRow => x !== null);
+      rows = raw.map((r) => cleanRow(r, "osm")).filter((x): x is ResearchRow => x !== null);
     }
   } else {
     rows = raw
@@ -284,6 +313,16 @@ export async function runLeadResearch(
     if (r.phone) seenPhones.add(r.phone);
     if (r.email) seenEmails.add(r.email);
 
+    const { score, reasons } = computeLeadScore({
+      website: r.website,
+      phone: r.phone,
+      email: r.email,
+      address: r.address,
+      industry: r.industry,
+      city: r.city,
+      country: r.country,
+    });
+
     batch.push({
       user_id: user.id,
       assigned_to: user.id,
@@ -295,29 +334,38 @@ export async function runLeadResearch(
       email: r.email,
       website: r.website,
       country: r.country,
+      state: r.state,
       city: r.city,
+      address: r.address,
       industry: r.industry,
       source: r.source,
+      tags: parseTags(r.industry),
       status: r.status,
       priority: r.priority,
       notes: r.notes,
       next_follow_up_at: r.next_follow_up_at,
+      lead_score: score,
+      lead_score_reasons: reasons,
+      ...fingerprint({
+        name: r.full_name,
+        city: r.city,
+        address: r.address,
+        phone: r.phone,
+        website: r.website,
+      }),
     });
   }
 
   if (batch.length) {
-    const CHUNK = 100;
-    for (let i = 0; i < batch.length; i += CHUNK) {
-      const chunk = batch.slice(i, i + CHUNK);
-      const { data, error } = await supabase.from("leads").insert(chunk).select("id");
-      if (error) {
-        report.errors.push(`Insert failed: ${error.message}`);
-        report.skipped += chunk.length;
-      } else {
-        report.inserted += (data ?? []).length;
-        if (data) report.insertedIds.push(...data.map((d) => d.id));
-      }
+    const ins = await insertLeadsDedupe(supabase, batch);
+    report.inserted += ins.insertedIds.length;
+    report.insertedIds.push(...ins.insertedIds);
+    if (ins.duplicates > 0) {
+      report.skipped += ins.duplicates;
+      report.skipped_reasons["Duplicate (already in CRM)"] =
+        (report.skipped_reasons["Duplicate (already in CRM)"] ?? 0) + ins.duplicates;
     }
+    for (const err of ins.errors) report.errors.push(`Insert failed: ${err}`);
 
     if (report.insertedIds.length) {
       await supabase.from("activities").insert(
@@ -326,7 +374,7 @@ export async function runLeadResearch(
           user_id: user.id,
           type: "imported",
           title: "Lead added by AI research",
-          description: `Researched for "${q}" (${report.source === "google" ? "Google Maps" : "AI"}).`,
+          description: `Researched for "${q}" (${report.source === "osm" ? "OpenStreetMap" : "AI"}).`,
         }))
       );
     }

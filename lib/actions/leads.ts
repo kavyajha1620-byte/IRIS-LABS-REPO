@@ -4,6 +4,15 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { LEAD_STATUSES, LEAD_PRIORITIES } from "@/lib/constants";
 import { validatePhone } from "@/lib/validation";
+import { insertLeadsDedupe } from "@/lib/insert-leads";
+import {
+  fingerprint,
+  computeLeadScore,
+  parseTags,
+  mapToAllowedIndustry,
+  normalizePhone,
+  normalizeEmail,
+} from "@/lib/leads-utils";
 
 export type ActionResult =
   | { ok: true; id?: string; message?: string }
@@ -45,23 +54,35 @@ function validateLeadInput(data: Record<string, FormDataEntryValue | null>) {
 function rowToLeadInput(data: Record<string, FormDataEntryValue | null>) {
   const { errors, values } = validateLeadInput(data);
   if (Object.keys(errors).length) return { errors };
+
+  const industry = mapToAllowedIndustry(String(values.industry ?? "").trim());
+  const base = {
+    full_name: String(values.full_name),
+    company: String(values.company ?? "").trim() || null,
+    job_title: String(values.job_title ?? "").trim() || null,
+    phone: String(values.phone ?? "").trim() || null,
+    whatsapp: String(values.whatsapp ?? "").trim() || null,
+    email: String(values.email ?? "").trim().toLowerCase() || null,
+    website: String(values.website ?? "").trim() || null,
+    country: String(values.country ?? "").trim() || null,
+    state: String(values.state ?? "").trim() || null,
+    city: String(values.city ?? "").trim() || null,
+    address: String(values.address ?? "").trim() || null,
+    industry,
+    source: String(values.source ?? "").trim() || null,
+    tags: parseTags(String(values.tags ?? "")),
+    status: String(values.status ?? "New"),
+    priority: String(values.priority ?? "Medium"),
+    notes: String(values.notes ?? "").trim() || null,
+  };
+  const { score, reasons } = computeLeadScore(base);
   return {
     errors: null,
     insert: {
-      full_name: String(values.full_name),
-      company: String(values.company ?? "").trim() || null,
-      job_title: String(values.job_title ?? "").trim() || null,
-      phone: String(values.phone ?? "").trim() || null,
-      whatsapp: String(values.whatsapp ?? "").trim() || null,
-      email: String(values.email ?? "").trim().toLowerCase() || null,
-      website: String(values.website ?? "").trim() || null,
-      country: String(values.country ?? "").trim() || null,
-      city: String(values.city ?? "").trim() || null,
-      industry: String(values.industry ?? "").trim() || null,
-      source: String(values.source ?? "").trim() || null,
-      status: String(values.status ?? "New"),
-      priority: String(values.priority ?? "Medium"),
-      notes: String(values.notes ?? "").trim() || null,
+      ...base,
+      lead_score: score,
+      lead_score_reasons: reasons,
+      ...fingerprint(base),
     },
   };
 }
@@ -106,7 +127,14 @@ export async function updateLead(formData: FormData): Promise<ActionResult> {
   const parsed = rowToLeadInput(Object.fromEntries(formData.entries()));
   if (parsed.errors) return { ok: false, error: Object.values(parsed.errors)[0] };
 
-  const { error } = await supabase.from("leads").update(parsed.insert).eq("id", id);
+  // Only update fields the form actually sent, so edits never wipe data the
+  // form doesn't know about (tags, scores, fingerprints, coordinates…).
+  const present = new Set(Object.keys(Object.fromEntries(formData.entries())));
+  const payload = Object.fromEntries(
+    Object.entries(parsed.insert).filter(([k]) => present.has(k))
+  );
+
+  const { error } = await supabase.from("leads").update(payload).eq("id", id);
   if (error) return { ok: false, error: `Could not update lead: ${error.message}` };
 
   revalidatePath("/leads");
@@ -216,7 +244,9 @@ export interface ImportRow {
   email: string;
   website: string;
   country: string;
+  state?: string;
   city: string;
+  address?: string;
   industry: string;
   source: string;
 }
@@ -229,10 +259,18 @@ export interface ImportReport {
   insertedIds: string[];
 }
 
-const normalizePhone = (v: string) => (v ?? "").replace(/[^\d]/g, "") || null;
-
-const normalizeEmail = (v: string) =>
-  (v ?? "").trim().toLowerCase() || null;
+function computeImportRowScore(raw: ImportRow, industry: string | null) {
+  const { score, reasons } = computeLeadScore({
+    website: (raw.website ?? "").trim() || undefined,
+    phone: normalizePhone(raw.phone) ?? undefined,
+    email: normalizeEmail(raw.email) ?? undefined,
+    address: (raw.address ?? "").trim() || undefined,
+    industry,
+    city: (raw.city ?? "").trim() || undefined,
+    country: (raw.country ?? "").trim() || undefined,
+  });
+  return { lead_score: score, lead_score_reasons: reasons };
+}
 
 export async function importLeads(rows: ImportRow[]): Promise<ActionResult & { report?: ImportReport }> {
   const supabase = await createClient();
@@ -295,6 +333,7 @@ export async function importLeads(rows: ImportRow[]): Promise<ActionResult & { r
       seenEmails.add(email);
     }
 
+    const industry = mapToAllowedIndustry((raw.industry ?? "").trim());
     batch.push({
       user_id: user.user.id,
       assigned_to: user.user.id,
@@ -306,27 +345,38 @@ export async function importLeads(rows: ImportRow[]): Promise<ActionResult & { r
       email,
       website: (raw.website ?? "").trim() || null,
       country: (raw.country ?? "").trim() || null,
+      state: (raw.state ?? "").trim() || null,
       city: (raw.city ?? "").trim() || null,
-      industry: (raw.industry ?? "").trim() || null,
+      address: (raw.address ?? "").trim() || null,
+      industry,
       source: (raw.source ?? "").trim() || "Imported",
+      tags: parseTags(industry),
       status: "New",
       priority: "Medium",
+      ...(computeImportRowScore(raw, industry)),
+      ...fingerprint({
+        name: fullName,
+        city: (raw.city ?? "").trim(),
+        address: (raw.address ?? "").trim(),
+        phone: phone ?? undefined,
+        website: (raw.website ?? "").trim(),
+      }),
     });
   });
 
   if (batch.length) {
-    const CHUNK = 500;
-    for (let i = 0; i < batch.length; i += CHUNK) {
-      const chunk = batch.slice(i, i + CHUNK);
-      const { data, error } = await supabase.from("leads").insert(chunk).select("id");
-      if (error) {
-        report.errors.push({ row: 0, reason: `Import failed: ${error.message}` });
-        report.skipped += chunk.length;
-      } else {
-        report.inserted += (data ?? []).length;
-        if (data) report.insertedIds.push(...data.map((d) => d.id));
-      }
+    const ins = await insertLeadsDedupe(supabase, batch);
+    report.inserted += ins.insertedIds.length;
+    report.insertedIds.push(...ins.insertedIds);
+    if (ins.duplicates > 0) {
+      report.errors.push({
+        row: 0,
+        reason: `${ins.duplicates} duplicate(s) skipped — already in the CRM (matched by domain, phone or name+location).`,
+      });
+      report.skipped += ins.duplicates;
     }
+    for (const err of ins.errors)
+      report.errors.push({ row: 0, reason: `Import failed: ${err}` });
 
     if (report.insertedIds.length) {
       await supabase.from("activities").insert(
@@ -345,4 +395,180 @@ export async function importLeads(rows: ImportRow[]): Promise<ActionResult & { r
   revalidatePath("/pipeline");
   revalidatePath("/");
   return { ok: true, report };
+}
+
+// ---------------------------------------------------------------------------
+// Assignment & bulk operations (admin / owner only)
+// ---------------------------------------------------------------------------
+
+export interface AssignableUser {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: string;
+  lead_count: number;
+}
+
+async function requireAdminRole(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+): Promise<"owner" | "admin" | null> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .single();
+  const role = data?.role ?? null;
+  return role === "owner" || role === "admin" ? role : null;
+}
+
+export async function getAssignableUsers(): Promise<
+  ActionResult & { users?: AssignableUser[] }
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  const role = await requireAdminRole(supabase, user.id);
+  if (!role) return { ok: false, error: "Admins only." };
+
+  const { data } = await supabase.rpc("admin_team_summary");
+  const users: AssignableUser[] = Array.isArray(data)
+    ? data.filter((m) => ["owner", "admin", "salesperson"].includes(m.role))
+    : [];
+  return { ok: true, users };
+}
+
+async function logAssigned(supabase: Awaited<ReturnType<typeof createClient>>, id: string) {
+  await supabase
+    .rpc("insert_activity", {
+      p_lead_id: id,
+      p_type: "assigned",
+      p_title: "Lead assigned",
+      p_description: "Lead assigned to this caller by an admin.",
+    })
+    .throwOnError();
+}
+
+export async function assignLead(id: string, toUserId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await requireAdminRole(supabase, user.id)))
+    return { ok: false, error: "Admins only." };
+
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("id,role")
+    .eq("id", toUserId)
+    .maybeSingle();
+  if (!target || !["owner", "admin", "salesperson"].includes(target.role))
+    return { ok: false, error: "Pick a team member to assign to." };
+
+  const { data: lead } = await supabase
+    .from("leads")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!lead) return { ok: false, error: "Lead not found." };
+
+  const { error } = await supabase
+    .from("leads")
+    .update({ user_id: toUserId, assigned_to: toUserId })
+    .eq("id", id);
+  if (error) return { ok: false, error: `Could not assign lead: ${error.message}` };
+
+  await logAssigned(supabase, id);
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+export async function assignManyLeads(ids: string[], toUserId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await requireAdminRole(supabase, user.id)))
+    return { ok: false, error: "Admins only." };
+  if (!ids.length) return { ok: false, error: "Select at least one lead." };
+
+  const { error } = await supabase
+    .from("leads")
+    .update({ user_id: toUserId, assigned_to: toUserId })
+    .in("id", ids);
+  if (error) return { ok: false, error: `Could not assign leads: ${error.message}` };
+
+  for (const id of ids) await logAssigned(supabase, id);
+  revalidatePath("/leads");
+  revalidatePath("/admin");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+export async function assignRoundRobin(ids: string[]): Promise<ActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await requireAdminRole(supabase, user.id)))
+    return { ok: false, error: "Admins only." };
+  if (!ids.length) return { ok: false, error: "Select at least one lead." };
+
+  const { data } = await supabase.rpc("admin_team_summary");
+  const agents: AssignableUser[] = Array.isArray(data)
+    ? data.filter((m) => ["owner", "admin", "salesperson"].includes(m.role))
+    : [];
+  if (!agents.length) return { ok: false, error: "No team members to assign to." };
+  agents.sort((a, b) => a.lead_count - b.lead_count);
+
+  const buckets = new Map<string, string[]>();
+  ids.forEach((id, i) => {
+    const agent = agents[i % agents.length];
+    const list = buckets.get(agent.id) ?? [];
+    list.push(id);
+    buckets.set(agent.id, list);
+  });
+
+  for (const [agentId, list] of buckets) {
+    const { error } = await supabase
+      .from("leads")
+      .update({ user_id: agentId, assigned_to: agentId })
+      .in("id", list);
+    if (error) return { ok: false, error: `Could not assign leads: ${error.message}` };
+    for (const id of list) await logAssigned(supabase, id);
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/admin");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+export async function deleteManyLeads(ids: string[]): Promise<ActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Not authenticated." };
+  if (!(await requireAdminRole(supabase, user.id)))
+    return { ok: false, error: "Admins only." };
+  if (!ids.length) return { ok: false, error: "Select at least one lead." };
+
+  const { error } = await supabase.from("leads").delete().in("id", ids);
+  if (error) return { ok: false, error: `Could not delete leads: ${error.message}` };
+
+  revalidatePath("/leads");
+  revalidatePath("/pipeline");
+  revalidatePath("/analytics");
+  revalidatePath("/admin");
+  revalidatePath("/");
+  return { ok: true };
 }

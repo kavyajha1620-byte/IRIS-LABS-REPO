@@ -104,8 +104,14 @@ export function LeadForm({
             ))}
           </Select>
         </Field>
+        <Field label="State / Region">
+          <Input name="state" defaultValue={lead?.state ?? ""} placeholder="Florida" />
+        </Field>
         <Field label="City">
-          <Input name="city" defaultValue={lead?.city ?? ""} placeholder="Chicago" />
+          <Input name="city" defaultValue={lead?.city ?? ""} placeholder="Miami" />
+        </Field>
+        <Field label="Address">
+          <Input name="address" defaultValue={lead?.address ?? ""} placeholder="123 Main St" />
         </Field>
         <Field label="Industry">
           <Select name="industry" defaultValue={lead?.industry ?? ""}>
@@ -144,6 +150,9 @@ export function LeadForm({
               </option>
             ))}
           </Select>
+        </Field>
+        <Field label="Tags" hint="Comma-separated, e.g. hot, callback, vip">
+          <Input name="tags" defaultValue={(lead?.tags ?? []).join(", ")} placeholder="hot, callback, vip" />
         </Field>
         {isEdit && lead && (
           <Field label="Created">

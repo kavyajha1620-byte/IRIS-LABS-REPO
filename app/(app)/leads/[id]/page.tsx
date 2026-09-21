@@ -15,6 +15,8 @@ import {
   History,
   ArrowLeft,
   Briefcase,
+  Star,
+  Tag,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -77,6 +79,13 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
     .single();
   const authorName = profile?.full_name || (user?.user_metadata?.full_name as string) || "You";
 
+  const { data: assigneeProfile } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", lead.assigned_to ?? "")
+    .maybeSingle();
+  const assigneeName = assigneeProfile?.full_name ?? null;
+
   const [followUpsRes, notesRes, activitiesRes, callsRes] = await Promise.all([
     supabase.from("follow_ups").select("*").eq("lead_id", id).order("created_at", { ascending: false }),
     supabase.from("notes").select("*").eq("lead_id", id).order("created_at", { ascending: false }),
@@ -121,7 +130,23 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <StatusBadge status={lead.status} color={STATUS_COLORS[lead.status as LeadStatus]} />
                   <PriorityBadge priority={lead.priority} color={PRIORITY_COLORS[lead.priority as LeadPriority]} />
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums ${
+                      (lead.lead_score ?? 0) >= 30
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : (lead.lead_score ?? 0) >= 15
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-border bg-muted/60 text-muted-foreground"
+                    }`}
+                  >
+                    {<Star className="h-3 w-3" />} Score {(lead.lead_score ?? 0)}/50
+                  </span>
                 </div>
+                {lead.lead_score_reasons && lead.lead_score_reasons.length > 0 && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Why: {lead.lead_score_reasons.join(" · ")}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -158,11 +183,29 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
                 <InfoRow icon={<Briefcase className="h-4 w-4" />} label="Job title" value={lead.job_title} />
                 <InfoRow icon={<Layers className="h-4 w-4" />} label="Industry" value={lead.industry} />
                 <InfoRow icon={<UserPlus className="h-4 w-4" />} label="Lead source" value={lead.source} />
+                <InfoRow icon={<Globe className="h-4 w-4" />} label="Source URL" value={lead.source_url} href={lead.source_url || undefined} />
                 <InfoRow
                   icon={<MapPin className="h-4 w-4" />}
                   label="Location"
-                  value={[lead.city, lead.country].filter(Boolean).join(", ")}
+                  value={[lead.address, lead.city, lead.state, lead.country].filter(Boolean).join(", ")}
                 />
+                {(lead.tags ?? []).length > 0 && (
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <Tag className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-muted-foreground">Tags</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {lead.tags!.map((t: string) => (
+                          <span key={t} className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -191,7 +234,7 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               </div>
               <div className="rounded-xl bg-muted/60 p-3">
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><UserIcon className="h-3.5 w-3.5" /> Assigned to</p>
-                <p className="mt-1 text-sm font-medium">{authorName}</p>
+                <p className="mt-1 text-sm font-medium">{assigneeName ?? "Unassigned"}</p>
               </div>
               <div className="rounded-xl bg-muted/60 p-3">
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><History className="h-3.5 w-3.5" /> Updated</p>

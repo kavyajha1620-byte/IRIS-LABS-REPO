@@ -16,6 +16,10 @@ import {
   Trash2,
   Phone,
   Users,
+  Star,
+  Check,
+  Tag,
+  Shuffle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +30,15 @@ import { Pagination } from "@/components/ui/pagination";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LeadForm } from "@/components/leads/lead-form";
-import { deleteLead, changeLeadStatus, setLeadFollowUp } from "@/lib/actions/leads";
+import {
+  deleteLead,
+  changeLeadStatus,
+  setLeadFollowUp,
+  assignManyLeads,
+  assignRoundRobin,
+  deleteManyLeads,
+  type AssignableUser,
+} from "@/lib/actions/leads";
 import {
   PRIORITY_COLORS,
   LEAD_STATUSES,
@@ -49,9 +61,19 @@ import {
 import type { Lead } from "@/lib/types";
 
 const PAGE_SIZE = 25;
-type SortKey = "newest" | "oldest" | "contacted" | "followup" | "priority";
+type SortKey = "newest" | "oldest" | "contacted" | "followup" | "priority" | "score";
 
-export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) {
+export function LeadsView({
+  leads,
+  userId,
+  isAdmin = false,
+  salespeople = [],
+}: {
+  leads: Lead[];
+  userId: string;
+  isAdmin?: boolean;
+  salespeople?: AssignableUser[];
+}) {
   const router = useRouter();
   const [q, setQ] = React.useState("");
   const [status, setStatus] = React.useState("");
@@ -59,6 +81,8 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
   const [country, setCountry] = React.useState("");
   const [industry, setIndustry] = React.useState("");
   const [source, setSource] = React.useState("");
+  const [assignedTo, setAssignedTo] = React.useState("");
+  const [tagFilter, setTagFilter] = React.useState("");
   const [followUpWindow, setFollowUpWindow] = React.useState("");
   const [sort, setSort] = React.useState<SortKey>("newest");
   const [nowMs] = React.useState(() => Date.now());
@@ -68,6 +92,21 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
   const [editing, setEditing] = React.useState<Lead | null>(null);
   const [deleting, setDeleting] = React.useState<Lead | null>(null);
   const [deletePending, setDeletePending] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [bulkTarget, setBulkTarget] = React.useState("");
+  const [bulkPending, setBulkPending] = React.useState(false);
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
+
+  const salespersonName = React.useCallback(
+    (id: string | null) => salespeople.find((s) => s.id === id)?.full_name ?? null,
+    [salespeople]
+  );
+
+  const allTags = React.useMemo(() => {
+    const set = new Set<string>();
+    leads.forEach((l) => (l.tags ?? []).forEach((t) => set.add(t)));
+    return Array.from(set).sort();
+  }, [leads]);
 
   const filtered = React.useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -86,6 +125,17 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
       if (country && l.country !== country) return false;
       if (industry && l.industry !== industry) return false;
       if (source && l.source !== source) return false;
+      if (assignedTo === "mine" && l.assigned_to !== userId) return false;
+      if (assignedTo === "unassigned" && l.assigned_to) return false;
+      if (
+        assignedTo &&
+        assignedTo !== "mine" &&
+        assignedTo !== "unassigned" &&
+        l.assigned_to !== assignedTo
+      ) {
+        return false;
+      }
+      if (tagFilter && !(l.tags ?? []).includes(tagFilter)) return false;
       if (followUpWindow) {
         if (followUpWindow === "overdue" && !isOverdue(l.next_follow_up_at)) return false;
         if (followUpWindow === "today" && !isDueToday(l.next_follow_up_at)) return false;
@@ -115,16 +165,82 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
           return (parse(a.next_follow_up_at) || Infinity) - (parse(b.next_follow_up_at) || Infinity);
         case "priority":
           return (prioRank[a.priority] ?? 1) - (prioRank[b.priority] ?? 1);
+        case "score":
+          return (b.lead_score ?? 0) - (a.lead_score ?? 0);
         default:
           return parse(b.created_at) - parse(a.created_at);
       }
     });
     return list;
-  }, [leads, q, status, priority, country, industry, source, followUpWindow, sort, nowMs]);
+  }, [leads, q, status, priority, country, industry, source, assignedTo, tagFilter, followUpWindow, sort, nowMs, userId]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function onBulkDelete() {
+    if (!selected.size) return;
+    setBulkDeleting(true);
+    try {
+      const res = await deleteManyLeads(Array.from(selected));
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Deleted ${selected.size} lead${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      router.refresh();
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  async function onBulkAssign() {
+    if (!bulkTarget) {
+      toast.error("Pick a team member to assign to.");
+      return;
+    }
+    setBulkPending(true);
+    try {
+      const res = await assignManyLeads(Array.from(selected), bulkTarget);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Assigned ${selected.size} lead${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      setBulkTarget("");
+      router.refresh();
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
+  async function onBulkRoundRobin() {
+    if (!selected.size) return;
+    setBulkPending(true);
+    try {
+      const res = await assignRoundRobin(Array.from(selected));
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Distributed ${selected.size} lead${selected.size === 1 ? "" : "s"} round-robin`);
+      setSelected(new Set());
+      router.refresh();
+    } finally {
+      setBulkPending(false);
+    }
+  }
 
   function exportCsv() {
     if (!filtered.length) {
@@ -140,11 +256,15 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
       "Email",
       "Website",
       "Country",
+      "State",
       "City",
+      "Address",
       "Industry",
       "Lead Source",
       "Status",
       "Priority",
+      "Score",
+      "Tags",
     ];
     const rows = filtered.map((l) =>
       [
@@ -156,11 +276,15 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
         l.email ?? "",
         l.website ?? "",
         l.country ?? "",
+        l.state ?? "",
         l.city ?? "",
+        l.address ?? "",
         l.industry ?? "",
         l.source ?? "",
         l.status,
         l.priority,
+        l.lead_score ?? 0,
+        (l.tags ?? []).join(", "),
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(",")
@@ -183,6 +307,9 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
     router.refresh();
   }
 
+  const activeFilterCount = [status, priority, country, industry, source, followUpWindow, assignedTo, tagFilter].filter(Boolean).length;
+  const canBulk = isAdmin && selected.size > 0;
+
   return (
     <div className="flex flex-col gap-4">
       {/* Toolbar */}
@@ -200,9 +327,9 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
           <Button variant="outline" onClick={() => setFiltersOpen((o) => !o)}>
             <SlidersHorizontal className="h-4 w-4" />
             Filters
-            {(status || priority || country || industry || source || followUpWindow) && (
+            {activeFilterCount > 0 && (
               <span className="ml-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white">
-                {[status, priority, country, industry, source, followUpWindow].filter(Boolean).length}
+                {activeFilterCount}
               </span>
             )}
           </Button>
@@ -212,6 +339,7 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
             <option value="contacted">Recently contacted</option>
             <option value="followup">Follow-up date</option>
             <option value="priority">Priority</option>
+            <option value="score">Lead score</option>
           </Select>
           <Button variant="outline" onClick={exportCsv}>
             <Download className="h-4 w-4" />
@@ -272,6 +400,27 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
               <option value="upcoming">Next 7 days</option>
               <option value="none">No follow-up</option>
             </Select>
+            {isAdmin && (
+              <Select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}>
+                <option value="">All assignees</option>
+                <option value="mine">Mine</option>
+                {salespeople.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.full_name ?? s.email ?? s.id.slice(0, 8)}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {allTags.length > 0 && (
+              <Select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)}>
+                <option value="">All tags</option>
+                {allTags.map((t) => (
+                  <option key={t} value={t}>
+                    #{t}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
         )}
       </div>
@@ -279,7 +428,46 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
       {/* Result count */}
       <p className="text-xs text-muted-foreground">
         {filtered.length} lead{filtered.length === 1 ? "" : "s"} found
+        {selected.size > 0 ? ` · ${selected.size} selected` : ""}
       </p>
+
+      {/* Bulk bar (admin) */}
+      {canBulk && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
+          <span className="text-sm font-medium text-primary">
+            {selected.size} selected
+          </span>
+          {salespeople.length > 0 && (
+            <>
+              <Select
+                value={bulkTarget}
+                onChange={(e) => setBulkTarget(e.target.value)}
+                className="w-56"
+                aria-label="Assign selected leads to"
+              >
+                <option value="">Assign to…</option>
+                {salespeople.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.full_name ?? s.email ?? s.id.slice(0, 8)}
+                  </option>
+                ))}
+              </Select>
+              <Button size="sm" onClick={onBulkAssign} loading={bulkPending} disabled={!bulkTarget}>
+                Assign
+              </Button>
+              <Button size="sm" variant="outline" onClick={onBulkRoundRobin} loading={bulkPending}>
+                <Shuffle className="h-4 w-4" /> Round-robin
+              </Button>
+            </>
+          )}
+          <Button size="sm" variant="destructive" onClick={() => setBulkDeleting(true)} disabled={bulkPending}>
+            <Trash2 className="h-4 w-4" /> Delete
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={bulkPending}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       {pageItems.length === 0 ? (
         <EmptyState
@@ -287,7 +475,7 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
           title="No leads match"
           description={
             leads.length === 0
-              ? "Add your first cold-calling lead or import a CSV to get started."
+              ? "Add your first cold-calling lead, import a CSV, or run lead generation."
               : "Try adjusting your search or filters."
           }
           action={
@@ -301,6 +489,11 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                     <Upload className="h-4 w-4" /> Import CSV
                   </Button>
                 </Link>
+                <Link href="/research">
+                  <Button variant="outline">
+                    <Users className="h-4 w-4" /> Generate leads
+                  </Button>
+                </Link>
               </div>
             ) : undefined
           }
@@ -308,15 +501,18 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:block">
-            <table className="w-full text-sm">
+          <div className="hidden overflow-x-auto rounded-2xl border border-border bg-card shadow-sm md:block">
+            <table className="w-full min-w-[1080px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/60 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {isAdmin && <th className="w-10 px-3 py-3"></th>}
                   <th className="px-4 py-3">Lead</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Priority</th>
+                  <th className="px-4 py-3">Score</th>
                   <th className="px-4 py-3">Phone</th>
                   <th className="px-4 py-3">Email</th>
+                  {isAdmin && <th className="px-4 py-3">Assigned to</th>}
                   <th className="px-4 py-3">Last contact</th>
                   <th className="px-4 py-3">Next follow-up</th>
                   <th className="px-4 py-3">Created</th>
@@ -326,25 +522,50 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
               <tbody className="divide-y divide-border">
                 {pageItems.map((l) => (
                   <tr key={l.id} className="transition-colors hover:bg-muted/40">
+                    {isAdmin && (
+                      <td className="px-3 py-3">
+                        <button
+                          onClick={() => toggleSelected(l.id)}
+                          aria-label={selected.has(l.id) ? "Deselect" : "Select"}
+                          className="flex h-5 w-5 items-center justify-center rounded border border-border text-primary transition-colors hover:bg-muted"
+                        >
+                          {selected.has(l.id) && <Check className="h-3.5 w-3.5" />}
+                        </button>
+                      </td>
+                    )}
                     <td className="px-4 py-3">
-                      <Link href={`/leads/${l.id}`} className="group flex items-center gap-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                          {initials(l.full_name)}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium group-hover:text-primary">{l.full_name}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {l.company ?? "—"}
-                            {l.job_title ? ` · ${l.job_title}` : ""}
+                      <div className="flex items-center gap-3">
+                        <Link href={`/leads/${l.id}`} className="group flex items-center gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                            {initials(l.full_name)}
                           </span>
-                        </span>
-                      </Link>
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium group-hover:text-primary">{l.full_name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {l.company ?? "—"}
+                              {l.job_title ? ` · ${l.job_title}` : ""}
+                            </span>
+                            {(l.tags ?? []).length > 0 && (
+                              <span className="mt-0.5 flex flex-wrap gap-1">
+                                {l.tags!.slice(0, 3).map((t) => (
+                                  <span key={t} className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground">
+                                    <Tag className="h-2.5 w-2.5" /> {t}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
+                          </span>
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
-  <InlineStatusSelect leadId={l.id} status={l.status} />
-</td>
+                      <InlineStatusSelect leadId={l.id} status={l.status} />
+                    </td>
                     <td className="px-4 py-3">
                       <PriorityBadge priority={l.priority} color={PRIORITY_COLORS[l.priority]} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <ScoreBadge score={l.lead_score ?? 0} />
                     </td>
                     <td className="px-4 py-3">
                       {l.phone ? (
@@ -357,15 +578,20 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                     </td>
                     <td className="px-4 py-3">
                       {l.email ? (
-                        <span className="block max-w-[180px] truncate text-muted-foreground">{l.email}</span>
+                        <span className="block max-w-[160px] truncate text-muted-foreground">{l.email}</span>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
+                    {isAdmin && (
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {salespersonName(l.assigned_to) ?? "—"}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(l.last_contacted_at)}</td>
                     <td className="px-4 py-3">
-  <InlineFollowUp lead={l} />
-</td>
+                      <InlineFollowUp lead={l} />
+                    </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(l.created_at)}</td>
                     <td className="px-4 py-3">
                       <LeadRowActions
@@ -394,17 +620,29 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                       <span className="block truncate text-xs text-muted-foreground">{l.company ?? "—"}</span>
                     </span>
                   </Link>
-                  <LeadRowActions
-                    lead={l}
-                    onEdit={() => setEditing(l)}
-                    onDelete={() => setDeleting(l)}
-                  />
+                  <div className="flex items-center gap-2">
+                    {isAdmin && (
+                      <button
+                        onClick={() => toggleSelected(l.id)}
+                        aria-label={selected.has(l.id) ? "Deselect" : "Select"}
+                        className="flex h-5 w-5 items-center justify-center rounded border border-border text-primary"
+                      >
+                        {selected.has(l.id) && <Check className="h-3.5 w-3.5" />}
+                      </button>
+                    )}
+                    <LeadRowActions
+                      lead={l}
+                      onEdit={() => setEditing(l)}
+                      onDelete={() => setDeleting(l)}
+                    />
+                  </div>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-  <InlineStatusSelect leadId={l.id} status={l.status} />
-  <PriorityBadge priority={l.priority} color={PRIORITY_COLORS[l.priority]} />
-  <span className="text-xs text-muted-foreground">· {timeAgo(l.created_at)}</span>
-</div>
+                  <InlineStatusSelect leadId={l.id} status={l.status} />
+                  <PriorityBadge priority={l.priority} color={PRIORITY_COLORS[l.priority]} />
+                  <ScoreBadge score={l.lead_score ?? 0} />
+                  <span className="text-xs text-muted-foreground">· {timeAgo(l.created_at)}</span>
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
                   {l.phone && (
                     <a href={telHref(l.phone)} className="font-medium text-foreground hover:text-primary">
@@ -434,7 +672,30 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
         title="Delete lead"
         description={`Delete ${deleting?.full_name ?? "this lead"}? Related calls, notes and activities will also be removed.`}
       />
+      <ConfirmDialog
+        open={bulkDeleting}
+        onClose={() => setBulkDeleting(false)}
+        onConfirm={onBulkDelete}
+        loading={bulkPending}
+        title="Delete selected leads"
+        description={`Delete ${selected.size} selected lead${selected.size === 1 ? "" : "s"}? Related calls, notes and activities will also be removed.`}
+      />
     </div>
+  );
+}
+
+function ScoreBadge({ score }: { score: number }) {
+  const tone =
+    score >= 30
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : score >= 15
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-border bg-muted/60 text-muted-foreground";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums ${tone}`}>
+      <Star className="h-3 w-3" />
+      {score}
+    </span>
   );
 }
 

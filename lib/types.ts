@@ -6,6 +6,7 @@ export interface Profile {
   role: "owner" | "salesperson" | "admin";
   avatar_url: string | null;
   created_at: string;
+  email?: string | null;
 }
 
 export interface Lead {
@@ -19,9 +20,18 @@ export interface Lead {
   email: string | null;
   website: string | null;
   country: string | null;
+  state: string | null;
   city: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
   industry: string | null;
   source: string | null;
+  source_url: string | null;
+  source_id: string | null;
+  tags: string[];
+  lead_score: number;
+  lead_score_reasons: string[];
   status: LeadStatus;
   priority: LeadPriority;
   assigned_to: string | null;
@@ -30,6 +40,15 @@ export interface Lead {
   last_contacted_at: string | null;
   next_follow_up_at: string | null;
   notes: string | null;
+}
+
+export interface TeamMember {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  role: "owner" | "admin" | "salesperson";
+  lead_count: number;
+  created_at: string;
 }
 
 export interface Call {

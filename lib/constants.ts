@@ -7,6 +7,7 @@ export const LEAD_STATUSES = [
   "Called",
   "No Answer",
   "Interested",
+  "Qualified",
   "Follow-up",
   "Meeting Booked",
   "Proposal Sent",
@@ -15,6 +16,7 @@ export const LEAD_STATUSES = [
   "Lost",
   "Not Interested",
   "Wrong Number",
+  "Do Not Contact",
 ] as const;
 
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
@@ -28,6 +30,12 @@ export const LEAD_SOURCES = [
   "Website",
   "LinkedIn",
   "Google",
+  "Apify",
+  "OpenStreetMap",
+  "Google Maps",
+  "AI Research",
+  "Import",
+  "Imported",
   "Social Media",
   "Event",
   "Purchased List",
@@ -36,9 +44,13 @@ export const LEAD_SOURCES = [
 
 export const INDUSTRIES = [
   "Software",
+  "IT Services",
   "Finance",
+  "Financial Services",
   "Healthcare",
   "Retail",
+  "Food & Beverage",
+  "Hospitality",
   "Manufacturing",
   "Real Estate",
   "Logistics",
@@ -47,11 +59,16 @@ export const INDUSTRIES = [
   "Energy",
   "Telecom",
   "Consulting",
-  "Legal",
-  "Hospitality",
+  "Legal Services",
   "Agriculture",
   "Construction",
+  "Home Services",
   "Automotive",
+  "Cleaning & Landscaping",
+  "Beauty & Personal Care",
+  "Wellness & Fitness",
+  "Travel & Tourism",
+  "Pet Services",
   "Other",
 ] as const;
 
@@ -131,7 +148,7 @@ export const PIPELINE_COLUMNS: PipelineColumnDef[] = [
     id: "interested",
     title: "Interested",
     status: "Interested",
-    accepts: ["Interested"],
+    accepts: ["Interested", "Qualified"],
     color: "#8b5cf6",
   },
   {
@@ -173,7 +190,7 @@ export const PIPELINE_COLUMNS: PipelineColumnDef[] = [
     id: "lost",
     title: "Lost",
     status: "Lost",
-    accepts: ["Lost", "Not Interested", "Wrong Number"],
+    accepts: ["Lost", "Not Interested", "Wrong Number", "Do Not Contact"],
     color: "#ef4444",
   },
 ];
@@ -216,6 +233,7 @@ export const STATUS_COLORS: Record<LeadStatus, string> = {
   Called: "#0ea5e9",
   "No Answer": "#94a3b8",
   Interested: "#8b5cf6",
+  Qualified: "#0d9488",
   "Follow-up": "#f59e0b",
   "Meeting Booked": "#10b981",
   "Proposal Sent": "#06b6d4",
@@ -224,6 +242,7 @@ export const STATUS_COLORS: Record<LeadStatus, string> = {
   Lost: "#ef4444",
   "Not Interested": "#f43f5e",
   "Wrong Number": "#f43f5e",
+  "Do Not Contact": "#64748b",
 };
 
 export const PRIORITY_COLORS: Record<LeadPriority, string> = {
@@ -242,6 +261,7 @@ export const ACTIVITY_TYPES = [
   "imported",
   "task",
   "meeting",
+  "assigned",
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 
