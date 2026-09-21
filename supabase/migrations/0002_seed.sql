@@ -36,7 +36,7 @@ insert into public.leads (
   notes, last_contacted_at, next_follow_up_at, created_at, updated_at
 )
 select
-  l.id, d.uid, l.full_name, l.company, l.job_title, l.phone, l.whatsapp, l.email,
+  l.id::uuid, d.uid, l.full_name, l.company, l.job_title, l.phone, l.whatsapp, l.email,
   l.website, l.country, l.city, l.industry, l.source, l.status, l.priority, d.uid,
   l.notes, l.last_contacted_at, l.next_follow_up_at, l.created_at, l.updated_at
 from demo d, (values
@@ -51,7 +51,7 @@ from demo d, (values
   ('10000000-0000-0000-0000-000000000009', 'Chloe Dubois', 'Maison Dubois', 'Owner', '+33 1 42 68 53 00', '33142685300', 'chloe@maisondubois.fr', 'https://maisondubois.fr', 'France', 'Paris', 'Hospitality', 'Cold List', 'Not Interested', 'Low', 'Not a fit this quarter — may revisit later in the year.', now() - interval '15 days', null, now() - interval '45 days', now() - interval '15 days'),
   ('10000000-0000-0000-0000-000000000010', 'Priya Sharma', 'Innova Retail', 'Category Head', '+91 98100 12345', '919810012345', 'priya.sharma@innovaretail.in', 'https://innovaretail.in', 'India', 'Mumbai', 'Retail', 'LinkedIn', 'Interested', 'High', 'Very responsive. Demo with the team next week.', now() - interval '1 day', now() + interval '7 days', now() - interval '12 days', now() - interval '1 day'),
   ('10000000-0000-0000-0000-000000000011', 'Omar Al-Farsi', 'Gulf Freight Co', 'Operations Manager', '+971 50 555 0172', '971505550172', 'omar@gulffreight.ae', 'https://gulffreight.ae', 'United Arab Emirates', 'Dubai', 'Logistics', 'Event', 'New', 'High', 'Met at Logistics Expo. Follow up promptly.', null, now() + interval '1 day', now() - interval '2 days', now()),
-  ('10000000-0000-0000-0000-000000000012', 'Grace Lin', 'Luminary Education', 'Academic Director', '+65 6123 4567', '6561234567', 'grace@luminary.edu.sg', 'https://luminary.edu.sg', 'Singapore', 'Singapore', 'Education', 'Website', 'Call Back Soon', 'Medium', '', now() - interval '3 days', null, now() - interval '18 days', now() - interval '3 days'),
+  ('10000000-0000-0000-0000-000000000012', 'Grace Lin', 'Luminary Education', 'Academic Director', '+65 6123 4567', '6561234567', 'grace@luminary.edu.sg', 'https://luminary.edu.sg', 'Singapore', 'Singapore', 'Education', 'Website', 'Follow-up', 'Medium', '', now() - interval '3 days', null, now() - interval '18 days', now() - interval '3 days'),
   ('10000000-0000-0000-0000-000000000013', 'Robert Walker', 'Apex Manufacturing', 'Plant Manager', '+1 (214) 555-0169', '+12145550169', 'rwalker@apexmfg.com', 'https://apexmfg.com', 'United States', 'Dallas', 'Manufacturing', 'Purchased List', 'Proposal Sent', 'Medium', 'Quoted for 2 plants. Follow up after internal budget review.', now() - interval '8 days', now() + interval '9 days', now() - interval '50 days', now() - interval '8 days'),
   ('10000000-0000-0000-0000-000000000014', 'Sofia Rossi', 'Rosso Food Group', 'COO', '+39 06 1234 5678', '390612345678', 'sofia@rossofood.it', 'https://rossofood.it', 'Spain', 'Madrid', 'Food & Beverage', 'Cold List', 'Wrong Number', 'Low', 'Old number. Searching for the right contact.', now() - interval '22 days', null, now() - interval '38 days', now() - interval '22 days'),
   ('10000000-0000-0000-0000-000000000015', 'Henry Collins', 'Meridian Law LLP', 'Partner', '+1 (415) 555-0115', '+14155550115', 'hcollins@meridianlaw.com', 'https://meridianlaw.com', 'United States', 'San Francisco', 'Legal', 'Referral', 'Interested', 'High', 'Interested in case management workflows.', now() - interval '4 hours', now() + interval '2 days', now() - interval '16 days', now() - interval '4 hours'),
@@ -74,12 +74,12 @@ insert into public.calls (
   follow_up_required, next_follow_up_at, created_at
 )
 select
-  c.id, c.lead_id, d.uid, c.called_at, c.duration_seconds, c.outcome, c.notes,
+  c.id::uuid, c.lead_id::uuid, d.uid, c.called_at, c.duration_seconds, c.outcome, c.notes,
   c.follow_up_required, c.next_follow_up_at, c.created_at
 from demo d, (values
   ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', now() - interval '2 days', 900, 'Meeting Booked', 'Great call — she wants a full demo Friday.', true, now() + interval '2 days', now() - interval '2 days'),
   ('20000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', now() - interval '3 days', 720, 'Interested', 'Asked for pricing. Very engaged.', true, now() + interval '5 days', now() - interval '3 days'),
-  ('20000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000004', now() - interval '6 hours', 1500, 'Negotiation', 'Negotiating annual contract — volume discount requested.', true, now() + interval '3 days', now() - interval '6 hours'),
+  ('20000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000004', now() - interval '6 hours', 1500, 'Other', 'Negotiating annual contract — volume discount requested.', true, now() + interval '3 days', now() - interval '6 hours'),
   ('20000000-0000-0000-0000-000000000004', '10000000-0000-0000-0000-000000000007', now() - interval '7 days', 1200, 'Meeting Booked', 'Closing call — aligned on terms.', false, null, now() - interval '7 days'),
   ('20000000-0000-0000-0000-000000000005', '10000000-0000-0000-0000-000000000010', now() - interval '1 day', 640, 'Interested', 'Demo with their team next week.', true, now() + interval '7 days', now() - interval '1 day'),
   ('20000000-0000-0000-0000-000000000006', '10000000-0000-0000-0000-000000000008', now() - interval '6 days', 300, 'No Answer', 'No answer — try again.', true, now() + interval '7 days', now() - interval '6 days'),
@@ -99,7 +99,7 @@ insert into public.follow_ups (
   id, lead_id, user_id, title, due_at, status, notes, created_at, updated_at, completed_at
 )
 select
-  f.id, f.lead_id, d.uid, f.title, f.due_at, f.status, f.notes, f.created_at, f.updated_at, f.completed_at
+  f.id::uuid, f.lead_id::uuid, d.uid, f.title, f.due_at, f.status, f.notes, f.created_at, f.updated_at, f.completed_at
 from demo d, (values
   ('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'Follow up on demo invite', now() - interval '6 hours', 'Pending', 'Confirm time for Friday demo.', now() - interval '3 days', now() - interval '3 days', null),
   ('30000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000003', 'Send comparison deck', now() + interval '1 day', 'Pending', 'Compare feature-by-feature with competitor.', now() - interval '2 days', now() - interval '2 days', null),
@@ -123,7 +123,7 @@ on conflict (id) do nothing;
 with demo as (select id as uid from auth.users where email = 'mario@irislabs.com')
 insert into public.tasks (id, user_id, lead_id, title, description, due_at, priority, status, created_at, completed_at)
 select
-  t.id, d.uid, t.lead_id, t.title, t.description, t.due_at, t.priority, t.status, t.created_at, t.completed_at
+  t.id::uuid, d.uid, t.lead_id::uuid, t.title, t.description, t.due_at, t.priority, t.status, t.created_at, t.completed_at
 from demo d, (values
   ('40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'Prepare Friday demo', 'Build the tracking module demo flow.', now() + interval '2 days', 'High', 'Pending', now() - interval '1 day', null),
   ('40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'Prepare pricing sheet', 'Draft the tiered pricing worksheet.', now() + interval '1 day', 'High', 'Pending', now() - interval '2 days', null),
@@ -136,7 +136,7 @@ on conflict (id) do nothing;
 with demo as (select id as uid from auth.users where email = 'mario@irislabs.com')
 insert into public.activities (id, lead_id, user_id, type, title, description, metadata, created_at)
 select
-  a.id, a.lead_id, d.uid, a.type, a.title, a.description, a.metadata, a.created_at
+  a.id::uuid, a.lead_id::uuid, d.uid, a.type, a.title, a.description, a.metadata, a.created_at
 from demo d, (values
   ('50000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'call', 'Called Sarah Mitchell', 'Meeting booked on the first call.', '{"outcome":"Meeting Booked"}'::jsonb, now() - interval '2 days'),
   ('50000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000007', 'status', 'Status changed to Won', 'Deal closed with annual plan.', '{"from":"Negotiation","to":"Won"}'::jsonb, now() - interval '7 days'),
@@ -149,7 +149,7 @@ on conflict (id) do nothing;
 with demo as (select id as uid from auth.users where email = 'mario@irislabs.com')
 insert into public.notifications (id, user_id, type, title, message, lead_id, read, created_at)
 select
-  n.id, d.uid, n.type, n.title, n.message, n.lead_id, n.read, n.created_at
+  n.id::uuid, d.uid, n.type, n.title, n.message, n.lead_id::uuid, n.read, n.created_at
 from demo d, (values
   ('60000000-0000-0000-0000-000000000001', 'followup_due', 'Follow-up due today', 'Sarah Mitchell — demo invite confirmation.', '10000000-0000-0000-0000-000000000001', false, now() - interval '2 hours'),
   ('60000000-0000-0000-0000-000000000002', 'followup_overdue', 'Overdue follow-up', 'Miguel Herrera — budget review call was overdue.', '10000000-0000-0000-0000-000000000004', false, now() - interval '1 day'),

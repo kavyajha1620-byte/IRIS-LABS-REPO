@@ -66,7 +66,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     <div className="w-full">
       <div className="text-center">
         <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-lg font-bold text-white">
-          M
+          I
         </div>
         <h1 className="mt-4 text-xl font-semibold tracking-tight">{APP_NAME}</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">{APP_SUBTITLE}</p>
