@@ -23,7 +23,7 @@ const OVERPASS_URLS = [
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const UA = "IrisLabsCRM/1.0 (admin@irislabs.com)";
 
-async function runOverpass(query: string, timeoutMs = 15_000): Promise<unknown[]> {
+async function runOverpass(query: string, timeoutMs = 8_000): Promise<unknown[]> {
   let lastError: string = "OpenStreetMap search failed.";
   for (const url of OVERPASS_URLS) {
     const controller = new AbortController();
@@ -139,7 +139,7 @@ async function geocode(place: string): Promise<{ lat: number; lon: number; bbox:
   await sleep(1000); // Nominatim requires ~1 req/sec
   const url = `${NOMINATIM_URL}?q=${encodeURIComponent(place)}&format=json&limit=1&accept-language=en`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
+  const timer = setTimeout(() => controller.abort(), 8_000);
   try {
     const res = await fetch(url, { headers: { "User-Agent": UA }, signal: controller.signal });
     if (!res.ok) return null;
