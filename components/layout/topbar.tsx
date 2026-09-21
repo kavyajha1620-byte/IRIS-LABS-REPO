@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, LogOut } from "lucide-react";
+import { Bot, ChevronDown, LogOut } from "lucide-react";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { NotificationsBell } from "./notifications-popover";
+import { CopilotDrawer } from "@/components/copilot/copilot-drawer";
 import { logoutUser } from "@/lib/actions/auth";
 import { APP_NAME } from "@/lib/constants";
 import type { AppNotification } from "@/lib/types";
@@ -18,6 +19,7 @@ export function Topbar({
   notifications: AppNotification[];
 }) {
   const [loggingOut, setLoggingOut] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
 
   const initials =
     userName
@@ -48,6 +50,14 @@ export function Topbar({
       <div className="hidden lg:block" />
 
       <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => setCopilotOpen(true)}
+          className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          title="Ask the AI copilot"
+        >
+          <Bot className="h-4 w-4 text-primary" />
+          <span className="hidden sm:inline">Copilot</span>
+        </button>
         <Dropdown
           trigger={
             <button className="flex items-center gap-2 rounded-full p-1.5 pr-2 transition-colors hover:bg-muted">
@@ -80,6 +90,7 @@ export function Topbar({
         </Dropdown>
         <NotificationsBell notifications={notifications} />
       </div>
+      <CopilotDrawer open={copilotOpen} onClose={() => setCopilotOpen(false)} />
     </header>
   );
 }

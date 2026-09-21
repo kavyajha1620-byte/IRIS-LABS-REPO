@@ -245,7 +245,15 @@ export const ACTIVITY_TYPES = [
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 
-export const NAV_ITEMS = [
+export interface NavItem {
+  href: string;
+  label: string;
+  icon: string;
+  /** Only show this nav entry to these roles; everyone sees it when undefined. */
+  roles?: Array<"owner" | "admin" | "salesperson">;
+}
+
+export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: "LayoutDashboard" },
   { href: "/leads", label: "Leads", icon: "Users" },
   { href: "/pipeline", label: "Pipeline", icon: "KanbanSquare" },
@@ -253,8 +261,10 @@ export const NAV_ITEMS = [
   { href: "/follow-ups", label: "Follow-ups", icon: "CalendarClock" },
   { href: "/tasks", label: "Tasks", icon: "CheckSquare" },
   { href: "/analytics", label: "Analytics", icon: "BarChart3" },
+  { href: "/research", label: "AI Research", icon: "Bot" },
   { href: "/settings", label: "Settings", icon: "Settings" },
-] as const;
+  { href: "/admin", label: "Admin", icon: "ShieldCheck", roles: ["owner", "admin"] },
+];
 
 export const DATE_RANGE_PRESETS = ["Today", "7d", "30d", "90d", "12m"] as const;
 export type DateRangePreset = (typeof DATE_RANGE_PRESETS)[number];

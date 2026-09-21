@@ -11,6 +11,8 @@ import {
   CheckSquare,
   BarChart3,
   Settings,
+  Bot,
+  ShieldCheck,
   LogOut,
 } from "lucide-react";
 import { APP_NAME, NAV_ITEMS } from "@/lib/constants";
@@ -27,14 +29,18 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   CheckSquare,
   BarChart3,
   Settings,
+  Bot,
+  ShieldCheck,
 };
 
 export function Sidebar({
   userName,
   userEmail,
+  role,
 }: {
   userName: string;
   userEmail: string;
+  role?: string;
 }) {
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -61,7 +67,9 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter(
+          (item) => !item.roles || (role && item.roles.includes(role as "owner" | "admin" | "salesperson"))
+        ).map((item) => {
           const Icon = iconMap[item.icon];
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (

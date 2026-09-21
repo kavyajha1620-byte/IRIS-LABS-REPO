@@ -38,14 +38,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-full bg-background">
-      <Sidebar userName={userName} userEmail={user.email ?? ""} />
+      <Sidebar userName={userName} userEmail={user.email ?? ""} role={profile?.role} />
       <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
         <Topbar userName={userName} userEmail={user.email ?? ""} notifications={notifications} />
         <main className="flex-1 px-4 pb-24 pt-5 sm:px-6 lg:pb-8 lg:pt-6">
           <div className="mx-auto w-full max-w-7xl">{children}</div>
         </main>
       </div>
-      <MobileNav />
+      <MobileNav role={profile?.role} />
     </div>
   );
 }

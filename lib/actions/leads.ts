@@ -160,6 +160,49 @@ export async function changeLeadStatus(id: string, status: string): Promise<Acti
   return { ok: true };
 }
 
+export async function setLeadFollowUp(id: string, date: string): Promise<ActionResult> {
+  const supabase = await createClient();
+
+  const { data: lead, error: fetchError } = await supabase
+    .from("leads")
+    .select("id,user_id,next_follow_up_at")
+    .eq("id", id)
+    .single();
+  if (fetchError || !lead) return { ok: false, error: "Lead not found." };
+
+  const trimmed = (date ?? "").trim();
+  let iso: string | null = null;
+  if (trimmed) {
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return { ok: false, error: "Invalid date." };
+    iso = parsed.toISOString();
+  }
+
+  const { error } = await supabase
+    .from("leads")
+    .update({ next_follow_up_at: iso })
+    .eq("id", id);
+  if (error) return { ok: false, error: `Could not update follow-up: ${error.message}` };
+
+  await supabase.from("activities").insert({
+    lead_id: id,
+    user_id: lead.user_id,
+    type: "followup",
+    title: iso ? "Follow-up scheduled" : "Follow-up cleared",
+    description: iso
+      ? `Next follow-up set to ${iso.slice(0, 10)}.`
+      : "Cleared the follow-up date.",
+    metadata: { next_follow_up_at: iso },
+  });
+
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
+  revalidatePath("/follow-ups");
+  revalidatePath("/analytics");
+  revalidatePath("/");
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // CSV import
 // ---------------------------------------------------------------------------

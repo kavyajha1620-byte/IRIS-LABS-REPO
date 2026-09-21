@@ -15,21 +15,19 @@ import {
   Pencil,
   Trash2,
   Phone,
-  CheckCircle2,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { StatusBadge, PriorityBadge } from "@/components/ui/badge";
+import { PriorityBadge } from "@/components/ui/badge";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { Pagination } from "@/components/ui/pagination";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LeadForm } from "@/components/leads/lead-form";
-import { deleteLead } from "@/lib/actions/leads";
+import { deleteLead, changeLeadStatus, setLeadFollowUp } from "@/lib/actions/leads";
 import {
-  STATUS_COLORS,
   PRIORITY_COLORS,
   LEAD_STATUSES,
   LEAD_PRIORITIES,
@@ -38,7 +36,6 @@ import {
   COUNTRIES,
 } from "@/lib/constants";
 import {
-  cn,
   formatDate,
   formatDateTime,
   timeAgo,
@@ -344,8 +341,8 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={l.status} color={STATUS_COLORS[l.status]} />
-                    </td>
+  <InlineStatusSelect leadId={l.id} status={l.status} />
+</td>
                     <td className="px-4 py-3">
                       <PriorityBadge priority={l.priority} color={PRIORITY_COLORS[l.priority]} />
                     </td>
@@ -367,12 +364,8 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(l.last_contacted_at)}</td>
                     <td className="px-4 py-3">
-                      {l.next_follow_up_at ? (
-                        <FollowUpCell date={l.next_follow_up_at} />
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
+  <InlineFollowUp lead={l} />
+</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(l.created_at)}</td>
                     <td className="px-4 py-3">
                       <LeadRowActions
@@ -408,10 +401,10 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                   />
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <StatusBadge status={l.status} color={STATUS_COLORS[l.status]} />
-                  <PriorityBadge priority={l.priority} color={PRIORITY_COLORS[l.priority]} />
-                  <span className="text-xs text-muted-foreground">· {timeAgo(l.created_at)}</span>
-                </div>
+  <InlineStatusSelect leadId={l.id} status={l.status} />
+  <PriorityBadge priority={l.priority} color={PRIORITY_COLORS[l.priority]} />
+  <span className="text-xs text-muted-foreground">· {timeAgo(l.created_at)}</span>
+</div>
                 <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
                   {l.phone && (
                     <a href={telHref(l.phone)} className="font-medium text-foreground hover:text-primary">
@@ -419,11 +412,9 @@ export function LeadsView({ leads, userId }: { leads: Lead[]; userId: string }) 
                     </a>
                   )}
                   {l.email && <span className="max-w-[160px] truncate">{l.email}</span>}
-                  {l.next_follow_up_at && (
-                    <span className="ml-auto">
-                      Next: <FollowUpText date={l.next_follow_up_at} />
-                    </span>
-                  )}
+                  <span className="ml-auto">
+                    <InlineFollowUp lead={l} />
+                  </span>
                 </div>
               </div>
             ))}
@@ -453,18 +444,75 @@ function FollowUpText({ date }: { date: string }) {
   return <span>{formatDateTime(date)}</span>;
 }
 
-function FollowUpCell({ date }: { date: string }) {
+function InlineStatusSelect({ leadId, status }: { leadId: string; status: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = React.useState(false);
+
+  async function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const next = e.target.value;
+    if (next === status || busy) return;
+    setBusy(true);
+    try {
+      const res = await changeLeadStatus(leadId, next);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Status changed to ${next}`);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium",
-        isOverdue(date) && "border-red-200 bg-red-50 text-red-700",
-        isDueToday(date) && "border-amber-200 bg-amber-50 text-amber-700",
-        !isOverdue(date) && !isDueToday(date) && "border-border text-muted-foreground"
-      )}
+    <Select
+      value={status}
+      onChange={onChange}
+      disabled={busy}
+      className="h-8 w-[136px] rounded-lg text-xs font-medium"
     >
-      {isOverdue(date) && <CheckCircle2 className="h-3 w-3" />}
-      <FollowUpText date={date} />
+      {LEAD_STATUSES.map((s) => (
+        <option key={s} value={s}>
+          {s}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+function InlineFollowUp({ lead }: { lead: Lead }) {
+  const router = useRouter();
+  const [busy, setBusy] = React.useState(false);
+
+  async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const date = e.target.value;
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await setLeadFollowUp(lead.id, date);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(date ? "Follow-up date saved" : "Follow-up cleared");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {lead.next_follow_up_at && <FollowUpText date={lead.next_follow_up_at} />}
+      <Input
+        type="date"
+        value={lead.next_follow_up_at?.slice(0, 10) ?? ""}
+        onChange={onChange}
+        disabled={busy}
+        className="h-8 w-[150px] rounded-lg text-xs"
+        aria-label="Set follow-up date"
+      />
     </span>
   );
 }

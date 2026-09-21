@@ -13,6 +13,8 @@ import {
   CheckSquare,
   BarChart3,
   Settings,
+  Bot,
+  ShieldCheck,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
@@ -28,12 +30,17 @@ const more = [
   { href: "/follow-ups", label: "Follow-ups", icon: CalendarClock },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/research", label: "AI Research", icon: Bot },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function MobileNav() {
+const adminItems = [{ href: "/admin", label: "Admin", icon: ShieldCheck }];
+
+export function MobileNav({ role }: { role?: string }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const isAdmin = role === "owner" || role === "admin";
+  const moreItems = isAdmin ? [...more, ...adminItems] : more;
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -58,7 +65,7 @@ export function MobileNav() {
           onClick={() => setOpen(true)}
           className={cn(
             "flex flex-1 flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors",
-            more.some((m) => isActive(m.href)) ? "text-primary" : "text-muted-foreground"
+            moreItems.some((m) => isActive(m.href)) ? "text-primary" : "text-muted-foreground"
           )}
         >
           <MoreHorizontal className="h-[20px] w-[20px]" />
@@ -68,7 +75,7 @@ export function MobileNav() {
 
       <Modal open={open} onClose={() => setOpen(false)} title="More" size="sm">
         <div className="flex flex-col gap-1">
-          {more.map((item) => (
+          {moreItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
